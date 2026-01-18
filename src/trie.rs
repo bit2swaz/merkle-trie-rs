@@ -65,6 +65,12 @@ impl EthTrie {
         Self::verify_proof_recursive(&nibbles_vec, proof, 0)
     }
 
+    pub fn print_tree(&self) {
+        println!("trie structure:");
+        println!("root hash: {}", hex::encode(self.root_hash()));
+        Self::print_node(&self.root, 0, "");
+    }
+
     fn insert_at(node: Node, nibbles: &[u8], value: Vec<u8>) -> Node {
         match node {
             Node::Null => {
@@ -413,6 +419,61 @@ impl EthTrie {
         }
         len
     }
+
+    fn print_node(node: &Node, depth: usize, prefix: &str) {
+        let indent = "  ".repeat(depth);
+        
+        match node {
+            Node::Null => {
+                println!("{}{}[null]", indent, prefix);
+            }
+            Node::Leaf { key, value } => {
+                println!(
+                    "{}{}[leaf] path: {:?}, value: {:?}",
+                    indent,
+                    prefix,
+                    Self::format_nibbles(key),
+                    String::from_utf8_lossy(value)
+                );
+            }
+            Node::Extension { prefix: ext_prefix, next } => {
+                println!(
+                    "{}{}[extension] prefix: {:?}",
+                    indent,
+                    prefix,
+                    Self::format_nibbles(ext_prefix)
+                );
+                Self::print_node(next, depth + 1, "└─ ");
+            }
+            Node::Branch { children, value } => {
+                if let Some(v) = value {
+                    println!(
+                        "{}{}[branch] value: {:?}",
+                        indent,
+                        prefix,
+                        String::from_utf8_lossy(v)
+                    );
+                } else {
+                    println!("{}{}[branch]", indent, prefix);
+                }
+                
+                for (i, child) in children.iter().enumerate() {
+                    if !matches!(**child, Node::Null) {
+                        let child_prefix = format!("[{:x}] ", i);
+                        Self::print_node(child, depth + 1, &child_prefix);
+                    }
+                }
+            }
+        }
+    }
+
+    fn format_nibbles(nibbles: &[u8]) -> String {
+        nibbles
+            .iter()
+            .map(|n| format!("{:x}", n))
+            .collect::<Vec<_>>()
+            .join("")
+    }
 }
 
 impl Default for EthTrie {
@@ -751,5 +812,17 @@ mod tests {
                 key
             );
         }
+    }
+
+    #[test]
+    fn test_print_tree() {
+        let mut trie = EthTrie::new();
+        
+        trie.print_tree();
+        
+        trie.insert(b"test", b"value");
+        trie.insert(b"testing", b"another");
+        
+        trie.print_tree();
     }
 }
