@@ -2,7 +2,7 @@
 
 **Project Name:** `merkle-trie-rs`
 **Version:** 1.0.0
-**Status:** Draft / Specification
+**Status:** Complete
 **Classification:** Ethereum Core / Cryptography / Data Structures
 
 ---
@@ -14,6 +14,8 @@
 Unlike generic binary trees, this project implements a **hexary radix tree** with cryptographic commitment. It allows for the storage of arbitrary Key-Value pairs, where the "Key" is a path through the tree and the "Value" is RLP-encoded data. The system guarantees that any modification to the data results in a deterministic change to the **State Root Hash**, providing O(1) verification of the entire dataset.
 
 This implementation prioritizes strict specification compliance, educational depth regarding recursive ownership in Rust, and low-level manual bit manipulation.
+
+**Project Status:** All phases complete, all success criteria verified, 64 passing tests.
 
 ---
 
@@ -35,7 +37,7 @@ Ethereum keys (typically 20-byte addresses or 32-byte hashes) are treated as a s
 
 ### 2.3 Hex-Prefix (HP) Encoding
 
-To distinguish between Leaf nodes (terminators) and Extension nodes (path segments), and to handle odd-length paths, the project must implement **Hex-Prefix Encoding** (compact encoding).
+To distinguish between Leaf nodes (terminators) and Extension nodes (path segments), and to handle odd-length paths, the project implements **Hex-Prefix Encoding** (compact encoding).
 
 * **Flag 0:** Extension Node, Even path length.
 * **Flag 1:** Extension Node, Odd path length.

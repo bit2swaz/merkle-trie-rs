@@ -825,4 +825,70 @@ mod tests {
         
         trie.print_tree();
     }
+
+    #[test]
+    fn test_insertion_order_determinism() {
+        let mut trie1 = EthTrie::new();
+        trie1.insert(b"alice", b"100");
+        trie1.insert(b"bob", b"200");
+        trie1.insert(b"charlie", b"300");
+        let hash1 = trie1.root_hash();
+
+        let mut trie2 = EthTrie::new();
+        trie2.insert(b"charlie", b"300");
+        trie2.insert(b"alice", b"100");
+        trie2.insert(b"bob", b"200");
+        let hash2 = trie2.root_hash();
+
+        let mut trie3 = EthTrie::new();
+        trie3.insert(b"bob", b"200");
+        trie3.insert(b"charlie", b"300");
+        trie3.insert(b"alice", b"100");
+        let hash3 = trie3.root_hash();
+
+        assert_eq!(
+            hash1, hash2,
+            "diff insertion orders should produce same root hash"
+        );
+        assert_eq!(
+            hash2, hash3,
+            "diff insertion orders should produce same root hash"
+        );
+
+        println!("all three tries have the same root hash: {}", hex::encode(hash1));
+    }
+
+    #[test]
+    fn test_proof_can_be_shared_and_verified() {
+        let mut trie = EthTrie::new();
+        trie.insert(b"ethereum", b"blockchain");
+        trie.insert(b"bitcoin", b"cryptocurrency");
+        trie.insert(b"solana", b"fast");
+
+        let root_hash = trie.root_hash();
+        let proof_for_ethereum = trie.get_proof(b"ethereum");
+
+        let verified_value = EthTrie::verify_proof(&root_hash, b"ethereum", &proof_for_ethereum);
+
+        assert_eq!(
+            verified_value,
+            Some(b"blockchain".to_vec()),
+            "friend should be able to verify proof with just root hash"
+        );
+
+        let keys: &[&[u8]] = &[b"ethereum", b"bitcoin", b"solana"];
+        for key in keys {
+            let proof = trie.get_proof(*key);
+            let result = EthTrie::verify_proof(&root_hash, *key, &proof);
+            assert!(
+                result.is_some(),
+                "proof for {} should be verifiable",
+                String::from_utf8_lossy(*key)
+            );
+        }
+
+        let fake_proof = trie.get_proof(b"nonexistent");
+        let fake_result = EthTrie::verify_proof(&root_hash, b"nonexistent", &fake_proof);
+        assert_eq!(fake_result, None, "non-existent key should not verify");
+    }
 }
