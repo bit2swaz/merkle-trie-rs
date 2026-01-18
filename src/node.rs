@@ -1,9 +1,10 @@
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use tiny_keccak::{Hasher, Keccak};
+use serde::{Deserialize, Serialize};
 
 use crate::nibbles::encode_compact;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Node {
     Null,
     Leaf {

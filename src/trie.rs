@@ -1,8 +1,10 @@
 use tiny_keccak::{Hasher, Keccak};
+use serde::{Deserialize, Serialize};
 
 use crate::nibbles::Nibbles;
 use crate::node::Node;
 
+#[derive(Serialize, Deserialize)]
 pub struct EthTrie {
     root: Box<Node>,
 }

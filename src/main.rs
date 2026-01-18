@@ -1,5 +1,9 @@
 use clap::{Parser, Subcommand};
 use merkle_trie_rs::trie::EthTrie;
+use std::fs;
+use std::path::Path;
+
+const STATE_FILE: &str = "trie.json";
 
 #[derive(Parser, Debug)]
 #[command(name = "merkle-trie-rs")]
@@ -22,6 +26,25 @@ enum Commands {
         key: String,
     },
     Demo,
+    Clear,
+}
+
+fn load_trie() -> EthTrie {
+    if Path::new(STATE_FILE).exists() {
+        let data = fs::read_to_string(STATE_FILE)
+            .expect("failed to read trie state file");
+        serde_json::from_str(&data)
+            .expect("failed to deserialize trie")
+    } else {
+        EthTrie::new()
+    }
+}
+
+fn save_trie(trie: &EthTrie) {
+    let data = serde_json::to_string(trie)
+        .expect("failed to serialize trie");
+    fs::write(STATE_FILE, data)
+        .expect("failed to write trie state file");
 }
 
 fn main() {
@@ -29,8 +52,9 @@ fn main() {
 
     match args.command {
         Commands::Insert { key, value } => {
-            let mut trie = EthTrie::new();
+            let mut trie = load_trie();
             trie.insert(key.as_bytes(), value.as_bytes());
+            save_trie(&trie);
             
             println!("inserted: '{}' => '{}'", key, value);
             println!("root hash: {}", hex::encode(trie.root_hash()));
@@ -38,8 +62,7 @@ fn main() {
             trie.print_tree();
         }
         Commands::Get { key } => {
-            let mut trie = EthTrie::new();
-            trie.insert(key.as_bytes(), b"demo_value");
+            let trie = load_trie();
             
             match trie.get(key.as_bytes()) {
                 Some(value) => {
@@ -51,8 +74,7 @@ fn main() {
             }
         }
         Commands::Proof { key } => {
-            let mut trie = EthTrie::new();
-            trie.insert(key.as_bytes(), b"demo_value");
+            let trie = load_trie();
             
             let proof = trie.get_proof(key.as_bytes());
             let root_hash = trie.root_hash();
@@ -77,6 +99,15 @@ fn main() {
                 None => {
                     println!("proof verification failed");
                 }
+            }
+        }
+        Commands::Clear => {
+            if Path::new(STATE_FILE).exists() {
+                fs::remove_file(STATE_FILE)
+                    .expect("failed to remove state file");
+                println!("trie state cleared");
+            } else {
+                println!("no state file to clear");
             }
         }
         Commands::Demo => {
