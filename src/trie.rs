@@ -35,6 +35,36 @@ impl EthTrie {
         Self::get_at(&self.root, &nibbles_vec)
     }
 
+    pub fn get_proof(&self, key: &[u8]) -> Vec<Vec<u8>> {
+        let nibbles = Nibbles::from_raw(key, false);
+        let nibbles_vec = nibbles.as_slice().to_vec();
+        let mut proof = Vec::new();
+        Self::get_proof_at(&self.root, &nibbles_vec, &mut proof);
+        proof
+    }
+
+
+    pub fn verify_proof(
+        root_hash: &[u8; 32],
+        key: &[u8],
+        proof: &[Vec<u8>],
+    ) -> Option<Vec<u8>> {
+        if proof.is_empty() {
+            return None;
+        }
+
+        let nibbles = Nibbles::from_raw(key, false);
+        let nibbles_vec = nibbles.as_slice().to_vec();
+
+        let first_item = &proof[0];
+        let computed_hash = Self::compute_hash(first_item);
+        if computed_hash != *root_hash {
+            return None;
+        }
+
+        Self::verify_proof_recursive(&nibbles_vec, proof, 0)
+    }
+
     fn insert_at(node: Node, nibbles: &[u8], value: Vec<u8>) -> Node {
         match node {
             Node::Null => {
@@ -290,6 +320,87 @@ impl EthTrie {
         }
     }
 
+    fn get_proof_at(node: &Node, nibbles: &[u8], proof: &mut Vec<Vec<u8>>) {
+        let encoded = rlp::encode(node);
+        proof.push(encoded.to_vec());
+
+        match node {
+            Node::Null => {
+            }
+            Node::Leaf { key: _, value: _ } => {
+            }
+            Node::Extension { prefix, next } => {
+                if nibbles.len() >= prefix.len() && &nibbles[..prefix.len()] == prefix.as_slice() {
+                    Self::get_proof_at(next, &nibbles[prefix.len()..], proof);
+                }
+            }
+            Node::Branch { children, value: _ } => {
+                if !nibbles.is_empty() {
+                    let idx = nibbles[0] as usize;
+                    Self::get_proof_at(&children[idx], &nibbles[1..], proof);
+                }
+            }
+        }
+    }
+
+    fn verify_proof_recursive(
+        nibbles: &[u8],
+        proof: &[Vec<u8>],
+        proof_index: usize,
+    ) -> Option<Vec<u8>> {
+        if proof_index >= proof.len() {
+            return None;
+        }
+
+        let current_item = &proof[proof_index];
+        
+        let node: Node = match rlp::decode(current_item) {
+            Ok(n) => n,
+            Err(_) => return None,
+        };
+
+        match node {
+            Node::Null => None,
+            Node::Leaf { key, value } => {
+                if key == nibbles {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
+            Node::Extension { prefix, next: _ } => {
+                if nibbles.len() < prefix.len() || &nibbles[..prefix.len()] != prefix.as_slice() {
+                    return None;
+                }
+
+                if proof_index + 1 >= proof.len() {
+                    return None;
+                }
+
+                Self::verify_proof_recursive(&nibbles[prefix.len()..], proof, proof_index + 1)
+            }
+            Node::Branch { children: _, value } => {
+                if nibbles.is_empty() {
+                    value
+                } else {
+                    if proof_index + 1 >= proof.len() {
+                        return None;
+                    }
+
+                    Self::verify_proof_recursive(&nibbles[1..], proof, proof_index + 1)
+                }
+            }
+        }
+    }
+
+    fn compute_hash(data: &[u8]) -> [u8; 32] {
+        let mut hasher = Keccak::v256();
+        let mut output = [0u8; 32];
+        hasher.update(data);
+        hasher.finalize(&mut output);
+        output
+    }
+
     fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
         let mut len = 0;
         let min_len = a.len().min(b.len());
@@ -491,5 +602,154 @@ mod tests {
         assert_eq!(trie.get(b"doge"), Some(b"coin".to_vec()));
         assert_eq!(trie.get(b"horse"), Some(b"stallion".to_vec()));
         assert_eq!(trie.get(b"d"), None);
+    }
+
+    #[test]
+    fn test_get_proof_single_key() {
+        let mut trie = EthTrie::new();
+        trie.insert(b"test", b"value");
+        
+        let proof = trie.get_proof(b"test");
+        
+        assert!(!proof.is_empty(), "proof should not be empty");
+    }
+
+    #[test]
+    fn test_get_proof_multiple_keys() {
+        let mut trie = EthTrie::new();
+        trie.insert(b"do", b"verb");
+        trie.insert(b"dog", b"puppy");
+        trie.insert(b"doge", b"coin");
+        
+        let proof_do = trie.get_proof(b"do");
+        let proof_dog = trie.get_proof(b"dog");
+        let proof_doge = trie.get_proof(b"doge");
+        
+        assert!(!proof_do.is_empty());
+        assert!(!proof_dog.is_empty());
+        assert!(!proof_doge.is_empty());
+        
+        assert!(proof_doge.len() >= proof_do.len());
+    }
+
+    #[test]
+    fn test_verify_proof_valid() {
+        let mut trie = EthTrie::new();
+        trie.insert(b"test", b"value");
+        
+        let root_hash = trie.root_hash();
+        let proof = trie.get_proof(b"test");
+        
+        let result = EthTrie::verify_proof(&root_hash, b"test", &proof);
+        
+        assert_eq!(result, Some(b"value".to_vec()), "valid proof should return the value");
+    }
+
+    #[test]
+    fn test_verify_proof_invalid_key() {
+        let mut trie = EthTrie::new();
+        trie.insert(b"test", b"value");
+        
+        let root_hash = trie.root_hash();
+        let proof = trie.get_proof(b"test");
+        
+        let result = EthTrie::verify_proof(&root_hash, b"other", &proof);
+        
+        assert_eq!(result, None, "invalid key should return None");
+    }
+
+    #[test]
+    fn test_verify_proof_wrong_root_hash() {
+        let mut trie = EthTrie::new();
+        trie.insert(b"test", b"value");
+        
+        let proof = trie.get_proof(b"test");
+        
+        let wrong_hash = [0u8; 32];
+        let result = EthTrie::verify_proof(&wrong_hash, b"test", &proof);
+        
+        assert_eq!(result, None, "wrong root hash should return None");
+    }
+
+    #[test]
+    fn test_verify_proof_complex_trie() {
+        let mut trie = EthTrie::new();
+        
+        trie.insert(b"do", b"verb");
+        trie.insert(b"dog", b"puppy");
+        trie.insert(b"doge", b"coin");
+        trie.insert(b"horse", b"stallion");
+        
+        let root_hash = trie.root_hash();
+        
+        let test_cases: &[(&[u8], &[u8])] = &[
+            (b"do", b"verb"),
+            (b"dog", b"puppy"),
+            (b"doge", b"coin"),
+            (b"horse", b"stallion"),
+        ];
+        
+        for (key, expected_value) in test_cases {
+            let proof = trie.get_proof(*key);
+            let result = EthTrie::verify_proof(&root_hash, *key, &proof);
+            
+            assert_eq!(
+                result,
+                Some(expected_value.to_vec()),
+                "proof verification failed for key: {:?}",
+                String::from_utf8_lossy(*key)
+            );
+        }
+    }
+
+    #[test]
+    fn test_proof_for_nonexistent_key() {
+        let mut trie = EthTrie::new();
+        trie.insert(b"test", b"value");
+        
+        let root_hash = trie.root_hash();
+        let proof = trie.get_proof(b"other");
+        
+        assert!(!proof.is_empty());
+        
+        let result = EthTrie::verify_proof(&root_hash, b"other", &proof);
+        assert_eq!(result, None, "nonexistent key should return None");
+    }
+
+    #[test]
+    fn test_empty_proof() {
+        let trie = EthTrie::new();
+        let root_hash = trie.root_hash();
+        
+        let result = EthTrie::verify_proof(&root_hash, b"test", &[]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_proof_round_trip() {
+        let mut trie = EthTrie::new();
+        
+        for i in 0..10 {
+            let key = format!("key{}", i);
+            let value = format!("value{}", i);
+            trie.insert(key.as_bytes(), value.as_bytes());
+        }
+        
+        let root_hash = trie.root_hash();
+        
+        for i in 0..10 {
+            let key = format!("key{}", i);
+            let expected_value = format!("value{}", i);
+            
+            let proof = trie.get_proof(key.as_bytes());
+            let result = EthTrie::verify_proof(&root_hash, key.as_bytes(), &proof);
+            
+            assert_eq!(
+                result,
+                Some(expected_value.as_bytes().to_vec()),
+                "round trip failed for key: {}",
+                key
+            );
+        }
     }
 }

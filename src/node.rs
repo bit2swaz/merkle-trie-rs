@@ -1,4 +1,4 @@
-use rlp::{Encodable, RlpStream};
+use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use tiny_keccak::{Hasher, Keccak};
 
 use crate::nibbles::encode_compact;
@@ -34,6 +34,27 @@ impl Node {
             output.to_vec()
         }
     }
+
+    fn decode_compact(compact: &[u8]) -> Vec<u8> {
+        if compact.is_empty() {
+            return Vec::new();
+        }
+
+        let first_byte = compact[0];
+        let prefix = first_byte >> 4;
+        let mut nibbles = Vec::new();
+
+        if (prefix & 0x1) != 0 {
+            nibbles.push(first_byte & 0x0F);
+        }
+
+        for &byte in &compact[1..] {
+            nibbles.push(byte >> 4);
+            nibbles.push(byte & 0x0F);
+        }
+
+        nibbles
+    }
 }
 
 impl Encodable for Node {
@@ -68,6 +89,86 @@ impl Encodable for Node {
                     None => s.append_empty_data(),
                 };
             }
+        }
+    }
+}
+
+impl Decodable for Node {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        if rlp.is_empty() {
+            return Ok(Node::Null);
+        }
+
+        if !rlp.is_list() {
+            return Err(DecoderError::RlpExpectedToBeList);
+        }
+
+        let item_count = rlp.item_count()?;
+
+        match item_count {
+            2 => {
+                let path: Vec<u8> = rlp.val_at(0)?;
+                
+                if path.is_empty() {
+                    return Err(DecoderError::Custom("empty path in node"));
+                }
+
+                let first_byte = path[0];
+                let prefix = first_byte >> 4;
+                
+                let is_leaf = (prefix & 0x2) != 0;
+                
+                if is_leaf {
+                    let value: Vec<u8> = rlp.val_at(1)?;
+                    
+                    let key = Self::decode_compact(&path);
+                    
+                    Ok(Node::Leaf { key, value })
+                } else {
+                    let next_data: Vec<u8> = rlp.val_at(1)?;
+                    
+                    let prefix = Self::decode_compact(&path);
+                    
+                    let next = if next_data.len() == 32 {
+                        Box::new(Node::Null)
+                    } else {
+                        let next_rlp = Rlp::new(&next_data);
+                        Box::new(Node::decode(&next_rlp)?)
+                    };
+                    
+                    Ok(Node::Extension { prefix, next })
+                }
+            }
+            17 => {
+                let mut children: [Box<Node>; 16] = [
+                    Box::new(Node::Null), Box::new(Node::Null), Box::new(Node::Null), Box::new(Node::Null),
+                    Box::new(Node::Null), Box::new(Node::Null), Box::new(Node::Null), Box::new(Node::Null),
+                    Box::new(Node::Null), Box::new(Node::Null), Box::new(Node::Null), Box::new(Node::Null),
+                    Box::new(Node::Null), Box::new(Node::Null), Box::new(Node::Null), Box::new(Node::Null),
+                ];
+
+                for i in 0..16 {
+                    let child_data: Vec<u8> = rlp.val_at(i)?;
+                    if !child_data.is_empty() {
+                        if child_data.len() == 32 {
+                            children[i] = Box::new(Node::Null);
+                        } else {
+                            let child_rlp = Rlp::new(&child_data);
+                            children[i] = Box::new(Node::decode(&child_rlp)?);
+                        }
+                    }
+                }
+
+                let value_data: Vec<u8> = rlp.val_at(16)?;
+                let value = if value_data.is_empty() {
+                    None
+                } else {
+                    Some(value_data)
+                };
+
+                Ok(Node::Branch { children, value })
+            }
+            _ => Err(DecoderError::RlpIncorrectListLen),
         }
     }
 }
